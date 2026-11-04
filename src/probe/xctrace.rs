@@ -39,7 +39,19 @@ pub fn device_of(exe: &Path) -> Option<String> {
 
 impl Capture {
     /// Starts Time Profiler on `pid` and returns once it records (xctrace takes seconds to attach).
+    /// The first attach on a Mac whose recording service has not run yet can answer that the process
+    /// does not exist; one more attempt, a few seconds later, finds it.
     pub fn start(pid: u32, device: Option<&str>) -> Result<Capture> {
+        match Self::attach(pid, device) {
+            Err(e) if e.message.contains("Cannot find process") => {
+                std::thread::sleep(Duration::from_secs(3));
+                Self::attach(pid, device).map_err(|again| Error::msg(format!("{} (and again after 3 s: {})", e.message, again.message)))
+            }
+            other => other,
+        }
+    }
+
+    fn attach(pid: u32, device: Option<&str>) -> Result<Capture> {
         let trace = crate::host::paths::run().join(format!("xctrace-{}-{pid}.trace", std::process::id()));
         let _ = std::fs::remove_dir_all(&trace);
         let mut c = Command::new("xcrun");
