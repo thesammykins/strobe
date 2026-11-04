@@ -54,6 +54,12 @@ impl Capture {
             let Ok(text) = std::fs::read_to_string(&out) else { continue };
             let _ = std::fs::remove_file(&out);
             parse(&text, pid, self.t0, &mut deep, &mut index);
+            // A process `sample` attached to before dyld ran (launched suspended, or just spawned)
+            // gets "Binary images description not available": its images are read now, from one
+            // more sample of the process as it runs, so frames still map to their modules.
+            if !deep.modules.iter().any(|m| m.pid == pid) {
+                images(&late_images(pid), pid, &mut deep);
+            }
             deep.pids.push(pid);
         }
         if deep.samples.is_empty() && deep.dropped.is_empty() {
@@ -105,7 +111,7 @@ fn parse(text: &str, pid: u32, t0: u64, deep: &mut Deep, index: &mut HashMap<Vec
     let mut tid = 0u32;
     // The path from the thread root: (depth, address, count, module).
     let mut path: Vec<(usize, u64, u64, String)> = Vec::new();
-    let mut named: BTreeMap<u64, (String, String, u32)> = BTreeMap::new();
+    let mut named: BTreeMap<u64, (String, String, u32, String)> = BTreeMap::new();
     for (i, l) in lines.iter().enumerate() {
         if l.addr.is_none() {
             // A thread: `Thread_282959` (its id, as Activity Monitor numbers threads).
@@ -117,7 +123,7 @@ fn parse(text: &str, pid: u32, t0: u64, deep: &mut Deep, index: &mut HashMap<Vec
             path.pop();
         }
         let addr = l.addr.unwrap_or(0);
-        named.entry(addr).or_insert_with(|| (l.name.clone(), l.file.clone(), l.line));
+        named.entry(addr).or_insert_with(|| (l.name.clone(), l.file.clone(), l.line, l.module.clone()));
         path.push((l.depth, addr, l.count, l.module.clone()));
         // Self count: this frame's samples minus its children's.
         let (mut children, mut child_depth) = (0u64, None);
@@ -147,11 +153,15 @@ fn parse(text: &str, pid: u32, t0: u64, deep: &mut Deep, index: &mut HashMap<Vec
             deep.samples.push((t0, pid, tid, 0, at));
         }
     }
-    for (addr, (name, file, ln)) in named {
-        deep.located.push((pid, addr, name, file, ln));
+    for (addr, (name, file, ln, image)) in named {
+        deep.located.push((pid, addr, name, file, ln, image));
     }
-    // Binary images: `0x100eb4000 - 0x100efb4bf +hotloop (0) <UUID> /path`; `sample` hides paths under
+    images(text, pid, deep);
+}
+
+/// Binary images: `0x100eb4000 - 0x100efb4bf +hotloop (0) <UUID> /path`; `sample` hides paths under
     // a home folder (`/Users/*/…`), so the process's own mapping names the file.
+fn images(text: &str, pid: u32, deep: &mut Deep) {
     if let Some(images) = text.split("Binary Images:").nth(1) {
         for l in images.lines() {
             let f: Vec<&str> = l.split_whitespace().collect();
@@ -161,6 +171,22 @@ fn parse(text: &str, pid: u32, t0: u64, deep: &mut Deep, index: &mut HashMap<Vec
             deep.modules.push(Module { pid, base: a, size: b.saturating_sub(a) + 1, path });
         }
     }
+}
+
+/// One sample of a running process, for its binary images only.
+fn late_images(pid: u32) -> String {
+    let out = crate::host::paths::run().join(format!("sample-images-{}-{pid}.txt", std::process::id()));
+    let ok = Command::new("/usr/bin/sample")
+        .args([&pid.to_string(), "1", "1000", "-mayDie", "-fullPaths", "-file"])
+        .arg(&out)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    let text = if ok { std::fs::read_to_string(&out).unwrap_or_default() } else { String::new() };
+    let _ = std::fs::remove_file(&out);
+    text
 }
 
 /// The file mapped at `addr` in `pid` (libproc; this user's processes).

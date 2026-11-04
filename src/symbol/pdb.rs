@@ -203,5 +203,13 @@ pub fn demangle(name: &str) -> String {
     {
         return d;
     }
+    // Itanium C++ (`_Z…`; Mach-O's extra underscore already gone or still there).
+    let itanium = name.strip_prefix('_').filter(|n| n.starts_with("_Z")).unwrap_or(name);
+    if itanium.starts_with("_Z")
+        && let Ok(sym) = cpp_demangle::Symbol::new(itanium)
+        && let Ok(d) = sym.demangle(&cpp_demangle::DemangleOptions::default())
+    {
+        return d;
+    }
     name.to_string()
 }

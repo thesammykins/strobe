@@ -39,6 +39,8 @@ pdb-addr2line = "0.12"
 rustc-demangle = "0.1"
 # C++ symbol names in Microsoft's public PDBs (`?Present@CDXGISwapChain@@…`); pure Rust.
 msvc-demangler = "0.11"
+# Itanium C++ names (`_ZNK14SwiftHashTable5equal…`) in Mach-O and ELF symbol tables and `sample` output; pure Rust.
+cpp_demangle = { version = "0.4", default-features = false, features = ["std"] }
 
 [target.'cfg(unix)'.dependencies]
 # Linux and macOS system calls (affinity, CPU clocks, sysctl, proc_pidinfo, perf_event_open, dlopen); bindings only, no C build.

@@ -384,9 +384,10 @@ pub struct Deep {
     /// they cover the whole capture.
     #[serde(default)]
     pub untimed: bool,
-    /// Frames the sampling tool already named: (pid, address, function, file, line).
+    /// Frames the sampling tool already named: (pid, address, function, file, line, image). The image
+    /// is the library the tool saw the frame in (`SwiftUI`), which a shared cache's file does not say.
     #[serde(default)]
-    pub located: Vec<(u32, u64, String, String, u32)>,
+    pub located: Vec<(u32, u64, String, String, u32, String)>,
     /// Samples left out of `stacks`, by why (macOS: a thread waiting or inside the kernel).
     #[serde(default)]
     pub dropped: std::collections::BTreeMap<String, u64>,

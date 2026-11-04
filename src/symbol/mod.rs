@@ -49,7 +49,7 @@ pub struct Native {
 }
 
 /// A frame a sampling tool named: (pid, address, function, file, line).
-type Named = (u32, u64, String, String, u32);
+type Named = (u32, u64, String, String, u32, String);
 
 /// One resolved address: its frames innermost first (inline frames expanded).
 type Resolved = Vec<(String, String, u32, String, bool)>;
@@ -156,7 +156,9 @@ fn resolve_all(dir: &Path, deep: &Deep) -> Result<HashMap<String, Resolved>> {
                     let kernel = a >= KERNEL;
                     let frame = match deep.located.iter().find(|l| l.0 == s.1 && l.1 == a) {
                         // A frame the sampling tool named, in an image it did not list.
-                        Some((_, _, name, file, line)) => (demangle_any(name), file.clone(), *line, file_package(file).unwrap_or_else(|| "(unknown)".into()), true),
+                        Some((_, _, name, file, line, image)) => {
+                            (demangle_any(name), file.clone(), *line, file_package(file).unwrap_or_else(|| if image.is_empty() { "(unknown)".into() } else { image.clone() }), named_ok(name))
+                        }
                         None => (if kernel { "(kernel)".into() } else { "(unknown module)".into() }, String::new(), 0, if kernel { "(kernel)".into() } else { "(unknown)".into() }, false),
                     };
                     out.insert(key, vec![frame]);
@@ -218,7 +220,7 @@ fn resolve_all(dir: &Path, deep: &Deep) -> Result<HashMap<String, Resolved>> {
                     })
                     .collect(),
                 None => match addr_of.get(&key).and_then(|k| named.get(k)) {
-                    Some((_, _, name, file, line)) => vec![(demangle_any(name), file.clone(), *line, file_package(file).unwrap_or_else(|| fallback.clone()), true)],
+                    Some((_, _, name, file, line, image)) => vec![(demangle_any(name), file.clone(), *line, file_package(file).unwrap_or_else(|| in_cache(&fallback, image)), named_ok(name))],
                     None => vec![(module.clone(), String::new(), 0, fallback.clone(), false)],
                 },
             };
@@ -247,6 +249,23 @@ fn resolve_all(dir: &Path, deep: &Deep) -> Result<HashMap<String, Resolved>> {
     }
     let _ = write_gz(&cache, &out);
     Ok(out)
+}
+
+/// A name a sampling tool printed is a function's, unless it printed `???` (an address it could not name).
+fn named_ok(name: &str) -> bool {
+    !name.starts_with("???")
+}
+
+/// A frame in a dyld shared cache (one file holding every system library) belongs to the library the
+/// sampling tool named (`SwiftUI (simulator)`), not to the cache file.
+fn in_cache(fallback: &str, image: &str) -> String {
+    if image.is_empty() || !fallback.contains("shared_cache") {
+        return fallback.to_string();
+    }
+    match fallback.rfind(" (") {
+        Some(i) => format!("{image}{}", &fallback[i..]),
+        None => image.to_string(),
+    }
 }
 
 /// A name a sampling tool printed: mangled Rust or C++ (`_R…`, `_ZN…`) made readable.

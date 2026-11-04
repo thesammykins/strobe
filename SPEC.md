@@ -1468,7 +1468,7 @@ series' verdict; `--pixels-only` checks it with no timed pairs at all.
 | ID | Refuses when |
 |---|---|
 | `SoftwareGpu` | the target renders on a software adapter (SwiftShader, WARP, llvmpipe) and a frame or GPU metric is requested; a native app: its GPU work ran on such an adapter |
-| `DevBuild` | a dev or unminified build is measured for timing (Vite client, Solid dev build, `NODE_ENV` not `production`; a native app whose executable imports a debug C runtime, such as `ucrtbased.dll`, or Swift's `-Onone` support library `libswiftSwiftOnoneSupport.dylib`, itself or through the `<name>.debug.dylib` Xcode's Debug builds put beside it) |
+| `DevBuild` | a dev or unminified build is measured for timing (Vite client, Solid dev build, `NODE_ENV` not `production`; a native app whose executable imports a debug C runtime, such as `ucrtbased.dll`, or a Swift app that loads `<name>.debug.dylib`, where Xcode's Debug builds move its code (the linker drops the unused `-Onone` support library, so that library alone misses them), or links `libswiftSwiftOnoneSupport.dylib`) |
 | `DebuggerAttached` | a debugger, DevTools or a non-timing probe is attached during a timing block |
 | `WindowHidden` | the window is minimized, hidden, occluded or `visibilityState` is not `visible`; a native app's main window hidden, minimized or cloaked at the start or end of the runs, or another window over the point strobe would click (the OS hit-tests elsewhere). On macOS a main window covered by other apps' windows while someone uses the Mac does not refuse: the block waits, holding nothing, until a minute passes without input, then strobe brings the app to the front and runs it again |
 | `UnpacedSpin` | a native app presented more frames in a run than the display refreshed, plus ten: its frame metrics are refused |
@@ -1704,7 +1704,11 @@ name. Core migration needs the deep helper and is not built.
   standard library inlined into a caller (`/stdlib/public/`, a `.swiftinterface`) is `swift` and
   folds into its caller as Rust's `std` does; the module's own code goes by its binary
   (`App`, `App.debug.dylib`). An iOS simulator app is a macOS process: its runtime's modules
-  (`…/RuntimeRoot/…`) are `<module> (simulator)`.
+  (`…/RuntimeRoot/…`) are `<module> (simulator)`. A frame in a dyld shared cache (one file for
+  every system library) is the library `sample` named (`SwiftUI (simulator)`); a frame `sample`
+  printed as `???` counts as unresolved. Itanium C++ names are demangled in process.
+- `sample` attached before dyld ran (an app launched suspended, or just spawned) lists no images;
+  strobe then takes one more sample of the running process at the end for its image list.
 
 ### 12.3 `(program)`
 

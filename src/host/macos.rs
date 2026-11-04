@@ -984,9 +984,10 @@ pub fn raise_windows(pids: &[u32]) -> usize {
     usize::from(crate::target::a11y::ax::activate(w.pid).is_ok() && covered(&w) == 0.0)
 }
 
-/// Swift's `-Onone` support library when the executable links it, itself or through the
-/// `<name>.debug.dylib` beside it that Xcode's Debug builds move an app's code into: a Swift debug
-/// build, many times slower than the optimized one people run. None when unreadable.
+/// A Swift debug build, many times slower than the optimized one people run: an executable that
+/// loads `<name>.debug.dylib` (Xcode moves an app's code there only in Debug builds, for previews;
+/// the linker drops the unused `-Onone` support library from them), or one that links Swift's `-Onone`
+/// support library. None when unreadable.
 pub fn debug_runtime(exe: &Path) -> Option<String> {
     use object::macho::MachHeader64;
     use object::read::macho::MachHeader;
@@ -1002,10 +1003,8 @@ pub fn debug_runtime(exe: &Path) -> Option<String> {
         if file == "libswiftSwiftOnoneSupport.dylib" {
             return Some(format!("{file} (Swift -Onone)"));
         }
-        if file.ends_with(".debug.dylib")
-            && let Some(found) = debug_runtime(&exe.with_file_name(file))
-        {
-            return Some(format!("{file}: {found}"));
+        if file.ends_with(".debug.dylib") {
+            return Some(format!("{file} (Xcode Debug build)"));
         }
     }
     None
