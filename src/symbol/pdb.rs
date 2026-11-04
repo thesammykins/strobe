@@ -203,6 +203,16 @@ pub fn demangle(name: &str) -> String {
     {
         return d;
     }
+    // A C++ or Objective-C++ block's function: `___ZN…E_block_invoke` (Apple's form, `_N` after it for
+    // the next block in the same function).
+    if let Some((base, _)) = name.rsplit_once("_block_invoke")
+        && base.trim_start_matches('_').starts_with('Z')
+    {
+        let inner = demangle(&format!("_{}", base.trim_start_matches('_')));
+        if !inner.starts_with("_Z") {
+            return format!("invocation function for block in {inner}");
+        }
+    }
     // Itanium C++ (`_Z…`; Mach-O's extra underscore already gone or still there).
     let itanium = name.strip_prefix('_').filter(|n| n.starts_with("_Z")).unwrap_or(name);
     if itanium.starts_with("_Z")

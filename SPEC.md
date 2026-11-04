@@ -1706,7 +1706,7 @@ name. Core migration needs the deep helper and is not built.
   (`App`, `App.debug.dylib`). An iOS simulator app is a macOS process: its runtime's modules
   (`…/RuntimeRoot/…`) are `<module> (simulator)`. A frame in a dyld shared cache (one file for
   every system library) is the library `sample` named (`SwiftUI (simulator)`); a frame `sample`
-  printed as `???` counts as unresolved. Itanium C++ names are demangled in process.
+  printed as `???` counts as unresolved. Itanium C++ names are demangled in process, and Apple's block functions (`___Z…_block_invoke`) as `invocation function for block in …`.
 - `sample` attached before dyld ran (an app launched suspended, or just spawned) lists no images;
   strobe then takes one more sample of the running process at the end for its image list.
 
@@ -1895,7 +1895,12 @@ As built (Linux and macOS): no helper process. Native stacks run in strobe's own
   device from the executable's path; without it xctrace cannot find the pid), stopped with SIGINT and
   read from `xctrace export` of the `time-profile` table. A sample is a thread the kernel found
   running every 1 ms, with its time (counted from the trace's start date in its table of contents,
-  put on the host clock), so phases split and waiting threads never count. Frames come named and
+  put on the host clock), so phases split and waiting threads never count. The trace starts before
+  xctrace says it records and ends after SIGINT reaches it: samples outside that span are dropped and
+  counted, so a 15 s capture holds 15 s. Attached before dyld ran, xctrace names the simulator's
+  libraries by install name (`/System/Library/Frameworks/SwiftUI.framework/SwiftUI`); those are put
+  under the runtime root another of the trace's paths names, except the kernel, platform and pthread
+  libraries a simulator process takes from the host. Frames come named and
   located by Xcode's symbolication; strobe still reads the module's DWARF first and keeps Time
   Profiler's names (with the library inside the simulator's shared cache) for the rest; a frame it
   named only by its address is unresolved. Swift concurrency shows as the task's logical chain of

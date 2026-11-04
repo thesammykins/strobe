@@ -26,6 +26,8 @@ pub struct Capture {
     pid: u32,
     child: Child,
     trace: PathBuf,
+    /// Host clock when xctrace said it was recording.
+    from_ns: u64,
 }
 
 /// The simulator device a simulator app's executable runs in (`…/CoreSimulator/Devices/<udid>/…`).
@@ -57,7 +59,7 @@ impl Capture {
         loop {
             // "Ctrl-C to stop the recording": attached and sampling.
             match rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(l) if l.contains("Ctrl-C to stop") => return Ok(Capture { pid, child, trace }),
+                Ok(l) if l.contains("Ctrl-C to stop") => return Ok(Capture { pid, child, trace, from_ns: crate::host::now_ns() }),
                 Ok(_) => continue,
                 Err(_) => {}
             }
@@ -77,6 +79,7 @@ impl Capture {
     }
 
     pub fn stop(mut self) -> Result<Deep> {
+        let to_ns = crate::host::now_ns();
         unsafe { libc::kill(self.child.id() as i32, libc::SIGINT) };
         let _ = self.child.wait();
         let export = |args: &[&str]| -> Option<String> {
@@ -94,6 +97,14 @@ impl Capture {
         let t0 = crate::host::now_ns().saturating_sub(((now_ms - start_ms).max(0.0) * 1e6) as u64);
         let mut deep = parse(&table, t0);
         deep.pids = vec![self.pid];
+        // The trace starts before xctrace says it records and ends after SIGINT reaches it (a second
+        // or more on each side): only samples inside the capture strobe asked for are kept.
+        let before = deep.samples.len();
+        deep.samples.retain(|s| s.0 >= self.from_ns && s.0 <= to_ns);
+        if before > deep.samples.len() {
+            deep.dropped.insert("outside the capture (xctrace starting or saving)".into(), (before - deep.samples.len()) as u64);
+        }
+        (deep.t0_ns, deep.t1_ns) = (self.from_ns, to_ns);
         if deep.samples.is_empty() {
             return Err(Error::msg("Time Profiler recorded no samples of the process (idle, or its process ended)"));
         }
@@ -328,6 +339,18 @@ fn parse(xml: &str, t0: u64) -> Deep {
         }
     }
     deep.t1_ns = t1;
+    // A simulator app attached before dyld ran gets its simulator libraries by install name
+    // (`/System/Library/Frameworks/SwiftUI.framework/SwiftUI`), not by their file in the runtime
+    // (`…/RuntimeRoot/System/…`): they are the runtime's, under the root the trace's other paths name.
+    // The kernel, platform and pthread libraries a simulator process takes from the host stay as they are.
+    if let Some(root) = binaries.values().find_map(|b| b.1.find("/RuntimeRoot/").map(|i| b.1[..i + 12].to_string())) {
+        const HOST: [&str; 3] = ["libsystem_kernel.dylib", "libsystem_platform.dylib", "libsystem_pthread.dylib"];
+        for (name, path, _) in binaries.values_mut() {
+            if (path.starts_with("/System/") || path.starts_with("/usr/lib/")) && !HOST.contains(&name.as_str()) {
+                *path = format!("{root}{path}");
+            }
+        }
+    }
     // Modules: each binary from its load address to the highest address sampled in it, per process.
     let pids: Vec<u32> = deep.samples.iter().map(|s| s.1).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     let mut extent: HashMap<u64, u64> = HashMap::new();
