@@ -4,6 +4,7 @@
 #[cfg(unix)]
 pub mod dwarf;
 pub mod pdb;
+pub mod swift;
 
 use crate::etw::Deep;
 use crate::model::Result;
@@ -221,13 +222,27 @@ fn resolve_all(dir: &Path, deep: &Deep) -> Result<HashMap<String, Resolved>> {
                     None => vec![(module.clone(), String::new(), 0, fallback.clone(), false)],
                 },
             };
-            // The standard library inlined into a function (`wrapping_mul` in a loop) is that
-            // function's work: it folds into the frame it was inlined into, whose line is the call.
+            // The standard library inlined into a function (`wrapping_mul` in a loop, a Swift
+            // `Array` subscript) is that function's work: it folds into the frame it was inlined
+            // into, whose line is the call.
+            let std = |p: &str| p == "std" || p == "swift";
             let mut r = r;
-            while r.len() > 1 && r[0].3 == "std" && r[1..].iter().any(|f| f.3 != "std") {
+            while r.len() > 1 && std(&r[0].3) && r[1..].iter().any(|f| !std(&f.3)) {
                 r.remove(0);
             }
             out.insert(key, r);
+        }
+    }
+    // Swift's mangled names (from DWARF linkage names and symbol tables), all in one demangler run.
+    let mangled: Vec<String> = out.values().flatten().map(|f| f.0.clone()).filter(|n| swift::mangled(n)).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    if !mangled.is_empty()
+        && let Some(names) = swift::demangle(&mangled)
+    {
+        let readable: HashMap<&String, &String> = mangled.iter().zip(&names).collect();
+        for f in out.values_mut().flatten() {
+            if let Some(n) = readable.get(&f.0) {
+                f.0 = (*n).clone();
+            }
         }
     }
     let _ = write_gz(&cache, &out);
@@ -247,6 +262,9 @@ fn file_package(file: &str) -> Option<String> {
 /// The Rust crate (or `std`) a source path belongs to, from Cargo's folder layout.
 pub fn crate_of(file: &str) -> Option<String> {
     let f = file.replace('\\', "/");
+    if f.ends_with(".swift") || f.ends_with(".swiftinterface") {
+        return swift::package(&f);
+    }
     if f.contains("/rustc/") && f.contains("/library/") {
         return Some("std".into());
     }
@@ -275,6 +293,9 @@ pub fn module_package(path: &str) -> String {
             "(kernel)".into()
         } else if gpu {
             format!("{module} (gpu driver)")
+        } else if path.contains("/RuntimeRoot/") {
+            // An iOS, watchOS, tvOS or visionOS simulator's own system, run on macOS.
+            format!("{module} (simulator)")
         } else if path.starts_with("/System/") || path.starts_with("/usr/lib/system/") || (cfg!(target_os = "macos") && path.starts_with("/usr/lib/")) {
             format!("{module} (macos)")
         } else if path.starts_with("/usr/lib") || path.starts_with("/lib") {

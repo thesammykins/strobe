@@ -19,7 +19,7 @@ pub fn resolve(path: &Path, offsets: &[u64]) -> Option<Vec<Vec<Located>>> {
         return kallsyms(offsets);
     }
     let bytes = std::fs::read(path).ok()?;
-    let obj = object::File::parse(&*bytes).ok()?;
+    let obj = object::File::parse(thin(&bytes, None)).ok()?;
     let base = obj.segments().filter(|s| s.file_range().1 > 0).map(|s| s.address()).min().unwrap_or(0);
     // Mach-O prefixes every C-level name with one underscore.
     let macho = obj.format() == object::BinaryFormat::MachO;
@@ -41,7 +41,10 @@ pub fn resolve(path: &Path, offsets: &[u64]) -> Option<Vec<Vec<Located>>> {
         (*size == 0 || svma < start + size).then(|| demangle(name))
     };
     let debug_bytes = if obj.section_by_name(".debug_info").is_some() { None } else { debug_file(path, &obj).and_then(|p| std::fs::read(p).ok()) };
-    let debug_obj = debug_bytes.as_deref().and_then(|b| object::File::parse(b).ok());
+    let uuid = obj.mach_uuid().ok().flatten();
+    // A dSYM from another build of the module (a stale one beside a rebuilt app) would name the wrong
+    // code: only the one with the module's UUID is read.
+    let debug_obj = debug_bytes.as_deref().and_then(|b| object::File::parse(thin(b, uuid)).ok()).filter(|d| uuid.is_none() || d.mach_uuid().ok().flatten() == uuid);
     let dwarf_obj = debug_obj.as_ref().unwrap_or(&obj);
     let ctx = context(dwarf_obj);
     Some(
@@ -93,6 +96,27 @@ fn context<'a>(obj: &'a object::File<'a>) -> Option<addr2line::Context<Slice<'a>
     addr2line::Context::from_dwarf(dwarf).ok()
 }
 
+/// The Mach-O inside a universal (fat) file: the slice with this UUID, else the one for this machine's
+/// architecture (the one a native process loads). Any other file as it is.
+fn thin(bytes: &[u8], uuid: Option<[u8; 16]>) -> &[u8] {
+    use object::read::macho::{FatArch, MachOFatFile32, MachOFatFile64};
+    let slices: Vec<&[u8]> = match object::FileKind::parse(bytes) {
+        Ok(object::FileKind::MachOFat32) => MachOFatFile32::parse(bytes).map(|f| f.arches().iter().filter_map(|a| a.data(bytes).ok()).collect()).unwrap_or_default(),
+        Ok(object::FileKind::MachOFat64) => MachOFatFile64::parse(bytes).map(|f| f.arches().iter().filter_map(|a| a.data(bytes).ok()).collect()).unwrap_or_default(),
+        _ => return bytes,
+    };
+    let host = if cfg!(target_arch = "aarch64") { object::Architecture::Aarch64 } else { object::Architecture::X86_64 };
+    slices
+        .into_iter()
+        .find(|s| {
+            object::File::parse(*s).is_ok_and(|o| match uuid {
+                Some(u) => o.mach_uuid().ok().flatten() == Some(u),
+                None => o.architecture() == host,
+            })
+        })
+        .unwrap_or(bytes)
+}
+
 /// The separate file holding a module's DWARF, when there is one.
 fn debug_file(path: &Path, obj: &object::File) -> Option<PathBuf> {
     if let Ok(Some(id)) = obj.build_id() {
@@ -119,13 +143,18 @@ fn debug_file(path: &Path, obj: &object::File) -> Option<PathBuf> {
     None
 }
 
-/// A Mach-O module's dSYM DWARF file: beside it, in strobe's cache, or made into the cache now.
+/// A Mach-O module's dSYM DWARF file: beside it, beside the bundle holding it (Xcode's
+/// `Foo.app.dSYM` next to `Foo.app`, also for a framework or an extension inside it), in strobe's
+/// cache, or made into the cache now.
 fn dsym(path: &Path, uuid: &[u8; 16]) -> Option<PathBuf> {
     let name = path.file_name()?.to_string_lossy().to_string();
     let inner = |d: &Path| d.join("Contents/Resources/DWARF").join(&name);
-    let beside = inner(&PathBuf::from(format!("{}.dSYM", path.display())));
-    if beside.is_file() {
-        return Some(beside);
+    let bundles = path.ancestors().skip(1).filter(|a| a.extension().is_some_and(|e| ["app", "appex", "framework", "xpc", "bundle"].iter().any(|b| e == *b)));
+    for owner in std::iter::once(path).chain(bundles) {
+        let beside = inner(&PathBuf::from(format!("{}.dSYM", owner.display())));
+        if beside.is_file() {
+            return Some(beside);
+        }
     }
     let id: String = uuid.iter().map(|b| format!("{b:02X}")).collect();
     let cached = super::pdb::cache_dir().join("dsym").join(format!("{id}.dSYM"));
@@ -133,7 +162,7 @@ fn dsym(path: &Path, uuid: &[u8; 16]) -> Option<PathBuf> {
         return Some(inner(&cached));
     }
     // System libraries have no debug info to gather; a build that left its objects has.
-    if path.starts_with("/usr/lib") || path.starts_with("/System") {
+    if path.starts_with("/usr/lib") || path.starts_with("/System") || path.to_string_lossy().contains("/RuntimeRoot/") {
         return None;
     }
     let missing = cached.with_extension("missing");
