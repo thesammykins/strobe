@@ -70,7 +70,7 @@ pub fn record(args: &Args, target: &str) -> Result<Output> {
         let top = super::query::native_hotspots(&dir, "function", 8, None, None).map(|o| o.text).unwrap_or_default();
         let meta = json!({
             "id": id, "kind": "record", "target": target, "pid": root, "process": name, "probes": "deep", "token": "", "duration_ms": for_ms, "platform": platform,
-            "env": host::env(), "values": {}, "native": facts, "samples": d.samples.len(), "events_lost": d.events_lost, "pids": d.pids,
+            "env": host::env(), "values": {}, "native": facts, "samples": d.samples.len(), "events_lost": d.events_lost, "pids": d.pids, "sampler": d.sampler,
             "timing": "perturbed", "created": super::record::now_iso(), "valid": true,
         });
         store::write_json(&dir.join("meta.json"), &meta)?;

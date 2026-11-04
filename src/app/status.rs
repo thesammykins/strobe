@@ -61,7 +61,7 @@ pub fn run(args: &Args) -> Result<Output> {
         _ => format!("native stacks off: {}", crate::probe::perf::refusal().unwrap_or_default()),
     };
     #[cfg(target_os = "macos")]
-    let deep_text = "native stacks: /usr/bin/sample (every thread's stack each 1 ms, untimed)".to_string();
+    let deep_text = "native stacks: /usr/bin/sample for macOS apps (every thread's stack each 1 ms, untimed), Time Profiler for simulator apps (running threads each 1 ms, timed)".to_string();
     if !deep.presents() && cfg!(windows) {
         problems.push("no OS present events (native frame metrics are refused): strobe up".into());
     }

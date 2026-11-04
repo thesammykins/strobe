@@ -15,6 +15,8 @@ pub mod os;
 pub mod perf;
 #[cfg(target_os = "macos")]
 pub mod sample;
+#[cfg(target_os = "macos")]
+pub mod xctrace;
 pub mod shifts;
 pub mod symbols;
 pub mod trace;

@@ -276,7 +276,16 @@ pub struct StackCapture {
     #[cfg(target_os = "linux")]
     perf: crate::probe::perf::Capture,
     #[cfg(target_os = "macos")]
-    sample: crate::probe::sample::Capture,
+    mac: MacStacks,
+}
+
+/// macOS samples by what the process is (SPEC §13.4): a macOS app with `/usr/bin/sample`, a
+/// simulator app (iOS, tvOS, watchOS, visionOS) with Time Profiler, which reaches the simulator's own
+/// system and times its samples. When Time Profiler cannot attach, `sample` runs and says why.
+#[cfg(target_os = "macos")]
+enum MacStacks {
+    Sample(crate::probe::sample::Capture, String),
+    TimeProfiler(crate::probe::xctrace::Capture),
 }
 
 impl StackCapture {
@@ -290,7 +299,20 @@ impl StackCapture {
         #[cfg(target_os = "linux")]
         return Ok(StackCapture { perf: crate::probe::perf::Capture::start(root)? });
         #[cfg(target_os = "macos")]
-        return Ok(StackCapture { sample: crate::probe::sample::Capture::start(root)? });
+        {
+            let exe = crate::host::exe_of(root);
+            let simulator = exe.as_deref().and_then(crate::host::platform).is_some_and(|p| p.ends_with("-simulator"));
+            let mac = if simulator {
+                let device = exe.as_deref().and_then(crate::probe::xctrace::device_of);
+                match crate::probe::xctrace::Capture::start(root, device.as_deref()) {
+                    Ok(c) => MacStacks::TimeProfiler(c),
+                    Err(e) => MacStacks::Sample(crate::probe::sample::Capture::start(root)?, format!("sample (Time Profiler could not attach: {})", e.message)),
+                }
+            } else {
+                MacStacks::Sample(crate::probe::sample::Capture::start(root)?, "sample".into())
+            };
+            Ok(StackCapture { mac })
+        }
     }
 
     /// Stops sampling; thread names and missing module lists come from the live processes.
@@ -305,7 +327,10 @@ impl StackCapture {
         #[cfg(target_os = "linux")]
         return self.perf.stop();
         #[cfg(target_os = "macos")]
-        return self.sample.stop();
+        match self.mac {
+            MacStacks::Sample(c, how) => c.stop().map(|d| Deep { sampler: how, ..d }),
+            MacStacks::TimeProfiler(c) => c.stop().map(|d| Deep { sampler: "Time Profiler (xctrace)".into(), ..d }),
+        }
     }
 }
 
@@ -391,6 +416,9 @@ pub struct Deep {
     /// Samples left out of `stacks`, by why (macOS: a thread waiting or inside the kernel).
     #[serde(default)]
     pub dropped: std::collections::BTreeMap<String, u64>,
+    /// Which sampler took them when an OS has more than one (macOS: `sample` or Time Profiler).
+    #[serde(default)]
+    pub sampler: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

@@ -251,9 +251,10 @@ fn resolve_all(dir: &Path, deep: &Deep) -> Result<HashMap<String, Resolved>> {
     Ok(out)
 }
 
-/// A name a sampling tool printed is a function's, unless it printed `???` (an address it could not name).
+/// A name a sampling tool printed is a function's, unless it printed `???` (`sample`) or the address
+/// itself (Time Profiler) for one it could not name.
 fn named_ok(name: &str) -> bool {
-    !name.starts_with("???")
+    !name.starts_with("???") && !name.starts_with("0x")
 }
 
 /// A frame in a dyld shared cache (one file holding every system library) belongs to the library the

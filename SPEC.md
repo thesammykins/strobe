@@ -1889,6 +1889,21 @@ As built (Linux and macOS): no helper process. Native stacks run in strobe's own
   stack snapshots of every thread (system call leaves dropped and counted), with no times; a bench's
   attribution block keeps them all, warmup included, and says so. Hardened and system apps cannot be
   sampled at all.
+- **macOS, simulator apps** (an executable whose `LC_BUILD_VERSION` names an iOS, tvOS, watchOS or
+  visionOS simulator; it runs as a process of this user on the Mac): Apple's Time Profiler through
+  `xcrun xctrace record --template 'Time Profiler' --attach <pid> --device <udid>` (the simulator
+  device from the executable's path; without it xctrace cannot find the pid), stopped with SIGINT and
+  read from `xctrace export` of the `time-profile` table. A sample is a thread the kernel found
+  running every 1 ms, with its time (counted from the trace's start date in its table of contents,
+  put on the host clock), so phases split and waiting threads never count. Frames come named and
+  located by Xcode's symbolication; strobe still reads the module's DWARF first and keeps Time
+  Profiler's names (with the library inside the simulator's shared cache) for the rest; a frame it
+  named only by its address is unresolved. Swift concurrency shows as the task's logical chain of
+  async functions up to the task's entry (`completeTaskWithClosure`); what created the task is not in
+  it. Cost: `xctrace` takes about 300 MB, tens of seconds to attach and to save (outside the app,
+  attribution only), and attaches to the one process. If it cannot attach, `sample` runs and the
+  recording's `sampler` says why. Checked on an M1 with Xcode 27.2 (Developer Mode on): attach to a
+  simulator app needs `--device`; a macOS process attaches without it.
 
 As built (Windows):
 
