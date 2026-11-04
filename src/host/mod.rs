@@ -367,13 +367,18 @@ pub fn window_image(hwnd: isize) -> Option<crate::png::Image> {
     }
 }
 
-/// A debug C runtime the executable imports, when it imports one (Windows executables).
+/// A debug runtime the executable links, when it links one: a debug C runtime (Windows), Swift's
+/// `-Onone` support library (macOS).
 pub fn debug_runtime(exe: &Path) -> Option<String> {
     #[cfg(windows)]
     {
         win::debug_runtime(exe)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::debug_runtime(exe)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = exe;
         None

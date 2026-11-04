@@ -116,12 +116,12 @@ fn frame_metric(metric: &str) -> bool {
 pub(super) fn block(ctx: &mut Ctx, s: &Series, v: &Variant, pair: usize, set: Set, keep: bool) -> Result<Block> {
     let target = ctx.describe["targets"][&s.target].clone();
     let app = app(v, &target, &ctx.config)?;
-    // `DevBuild`: an executable that imports a debug C runtime is a debug build (timing blocks only).
+    // `DevBuild`: an executable that links a debug runtime is a debug build (timing blocks only).
     let timed = set != Set::Attribution && set != Set::Memory && ctx.pixels_dir.is_none();
     if let Some(crt) = host::debug_runtime(&app.exe).filter(|_| timed) {
         return Err(Error::refused(
             "DevBuild",
-            format!("{} imports {crt}, a debug C runtime: its timings describe no build people run", app.exe.display()),
+            format!("{} links {crt}, a debug runtime: its timings describe no build people run", app.exe.display()),
             "build the app optimized (strobe.json build: a release or profiling profile)",
         ));
     }
