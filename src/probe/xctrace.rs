@@ -192,6 +192,7 @@ fn parse(xml: &str, t0: u64) -> Deep {
     let mut paths: HashMap<u64, String> = HashMap::new();
     let mut backtraces: HashMap<u64, Vec<u64>> = HashMap::new();
     let mut index: HashMap<Vec<u64>, u32> = HashMap::new();
+    let mut outer: HashMap<u64, u64> = HashMap::new();
     // The row being read: time, thread id, its frames; the thread, process, frame and backtrace
     // being defined, and the element whose text is being read.
     let (mut time, mut thread, mut stack): (u64, Option<u64>, Vec<u64>) = (0, None, Vec::new());
@@ -233,7 +234,17 @@ fn parse(xml: &str, t0: u64) -> Deep {
                     if let Some(&(p, t)) = thread.and_then(|t| threads.get(&t))
                         && !stack.is_empty()
                     {
-                        let addrs: Vec<u64> = stack.iter().filter_map(|f| frames.get(f).map(|x| x.addr)).collect();
+                        // Time Profiler writes an inlined call as its own frame at the caller's
+                        // address, innermost first: one address per run of them, named by the last
+                        // (the function the code is compiled into), as DWARF expands inlines again.
+                        let mut addrs: Vec<u64> = Vec::with_capacity(stack.len());
+                        for f in &stack {
+                            let Some(x) = frames.get(f) else { continue };
+                            if addrs.last() != Some(&x.addr) {
+                                addrs.push(x.addr);
+                            }
+                            outer.insert(x.addr, *f);
+                        }
                         let next = deep.stacks.len() as u32;
                         let at = *index.entry(addrs.clone()).or_insert_with(|| {
                             deep.stacks.push(addrs);
@@ -379,7 +390,7 @@ fn parse(xml: &str, t0: u64) -> Deep {
             }
         }
         // What Time Profiler already named, for frames no debug info strobe finds names.
-        for f in frames.values() {
+        for f in outer.values().filter_map(|id| frames.get(id)) {
             let image = f.binary.and_then(|b| binaries.get(&b)).map(|b| b.0.clone()).unwrap_or_default();
             let file = f.file.and_then(|p| paths.get(&p)).cloned().unwrap_or_default();
             deep.located.push((*pid, f.addr, f.name.clone(), file, f.line, image));
