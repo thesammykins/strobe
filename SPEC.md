@@ -1468,7 +1468,7 @@ series' verdict; `--pixels-only` checks it with no timed pairs at all.
 | ID | Refuses when |
 |---|---|
 | `SoftwareGpu` | the target renders on a software adapter (SwiftShader, WARP, llvmpipe) and a frame or GPU metric is requested; a native app: its GPU work ran on such an adapter |
-| `DevBuild` | a dev or unminified build is measured for timing (Vite client, Solid dev build, `NODE_ENV` not `production`; a native app whose executable imports a debug C runtime, such as `ucrtbased.dll`) |
+| `DevBuild` | a dev or unminified build is measured for timing (Vite client, Solid dev build, `NODE_ENV` not `production`; a native app whose executable imports a debug C runtime, such as `ucrtbased.dll`, or Swift's `-Onone` support library `libswiftSwiftOnoneSupport.dylib`, itself or through the `<name>.debug.dylib` Xcode's Debug builds put beside it) |
 | `DebuggerAttached` | a debugger, DevTools or a non-timing probe is attached during a timing block |
 | `WindowHidden` | the window is minimized, hidden, occluded or `visibilityState` is not `visible`; a native app's main window hidden, minimized or cloaked at the start or end of the runs, or another window over the point strobe would click (the OS hit-tests elsewhere). On macOS a main window covered by other apps' windows while someone uses the Mac does not refuse: the block waits, holding nothing, until a minute passes without input, then strobe brings the app to the front and runs it again |
 | `UnpacedSpin` | a native app presented more frames in a run than the display refreshed, plus ten: its frame metrics are refused |
@@ -1696,6 +1696,15 @@ name. Core migration needs the deep helper and is not built.
   else the folder holding `src`), `std` for the Rust toolchain's library, else the module:
   `<module> (windows)` under the system folder, `<module> (gpu driver)` from the driver store or a
   GPU vendor's module.
+- Swift (macOS; any Swift binary on Linux with the toolchain on PATH): names from DWARF linkage
+  names and symbol tables are mangled (`$s…`); one `swift-demangle --simplified` (the toolchain's,
+  through `xcrun`) per recording makes them readable as `sample` and Instruments print them
+  (`closure #1 in Index.search(_:)`), at symbolization, never while measuring. A Swift file under
+  `…/checkouts/<package>/` (SwiftPM's `.build`, Xcode's `SourcePackages`) is that package's; the
+  standard library inlined into a caller (`/stdlib/public/`, a `.swiftinterface`) is `swift` and
+  folds into its caller as Rust's `std` does; the module's own code goes by its binary
+  (`App`, `App.debug.dylib`). An iOS simulator app is a macOS process: its runtime's modules
+  (`…/RuntimeRoot/…`) are `<module> (simulator)`.
 
 ### 12.3 `(program)`
 
