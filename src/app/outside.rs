@@ -41,6 +41,8 @@ pub fn resolve(target: &str) -> Result<u32> {
 pub fn record(args: &Args, target: &str) -> Result<Output> {
     let root = resolve(target)?;
     let name = host::all_processes().into_iter().find(|p| p.pid == root).map(|p| p.name).unwrap_or_default();
+    // A simulator app is a process of this Mac: its stacks are its own, its timings the Mac's.
+    let platform = host::exe_of(root).and_then(|e| host::platform(&e));
     let deep = match args.get("probes").unwrap_or("timing") {
         "timing" => false,
         "deep" | "attribution" => true,
@@ -67,13 +69,14 @@ pub fn record(args: &Args, target: &str) -> Result<Output> {
         let facts = native.as_ref().map(crate::symbol::summary).unwrap_or(Value::Null);
         let top = super::query::native_hotspots(&dir, "function", 8, None, None).map(|o| o.text).unwrap_or_default();
         let meta = json!({
-            "id": id, "kind": "record", "target": target, "pid": root, "process": name, "probes": "deep", "token": "", "duration_ms": for_ms,
+            "id": id, "kind": "record", "target": target, "pid": root, "process": name, "probes": "deep", "token": "", "duration_ms": for_ms, "platform": platform,
             "env": host::env(), "values": {}, "native": facts, "samples": d.samples.len(), "events_lost": d.events_lost, "pids": d.pids,
             "timing": "perturbed", "created": super::record::now_iso(), "valid": true,
         });
         store::write_json(&dir.join("meta.json"), &meta)?;
+        let on = platform.filter(|p| p.ends_with("-simulator")).map(|p| format!(" · {p} (stacks are the app's; their share of time is this Mac's, not a device's)")).unwrap_or_default();
         let text = format!(
-            "{id} · {target} ({name}) · {} · deep\n{top}next     strobe query {id} hotspots --by package · strobe query {id} hotspots --thread <name> · strobe report recording {id} --open\n",
+            "{id} · {target} ({name}) · {}{on} · deep\n{top}next     strobe query {id} hotspots --by package · strobe query {id} hotspots --thread <name> · strobe report recording {id} --open\n",
             fmt::ms_duration(for_ms)
         );
         return Ok(Output::new(text, meta));
@@ -159,7 +162,7 @@ pub fn record(args: &Args, target: &str) -> Result<Output> {
         Err(e) => Some(e.message.clone()),
     };
     let meta = json!({
-        "id": id, "kind": "record", "target": target, "pid": root, "process": name, "probes": "timing", "token": "", "duration_ms": for_ms,
+        "id": id, "kind": "record", "target": target, "pid": root, "process": name, "probes": "timing", "token": "", "duration_ms": for_ms, "platform": platform,
         "env": host::env(), "values": values, "os": os, "presents": session, "presents_refused": refused, "session_locked": session_locked, "ui_thread": ui_tid,
         "display_settings_hz": host::refresh_at(0, 0), "timing": "clean", "created": super::record::now_iso(), "valid": true,
     });
@@ -200,6 +203,9 @@ pub fn text(meta: &Value) -> String {
                 cpu.map(|c| format!("{c:.1} ms CPU ({:.3}% of a core)", 100.0 * c / dur)).unwrap_or_else(|| "?".into())
             );
         }
+    }
+    if let Some(p) = meta["platform"].as_str().filter(|p| p.ends_with("-simulator")) {
+        s += &format!("platform {p}: the app ran on this Mac's CPU and GPU, so these numbers describe the Mac, not a device\n");
     }
     if meta["session_locked"] == true {
         s += "session  locked: CPU and GPU numbers compare only with other locked recordings\n";

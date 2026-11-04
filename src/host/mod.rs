@@ -385,6 +385,20 @@ pub fn debug_runtime(exe: &Path) -> Option<String> {
     }
 }
 
+/// The platform a macOS executable was built for (`macos`, `maccatalyst`, `ios-simulator`, …), from
+/// its Mach-O load commands; None on other OSes or when unreadable.
+pub fn platform(exe: &Path) -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::platform(exe)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = exe;
+        None
+    }
+}
+
 /// A window's state now; None once it is gone.
 pub fn window_state(hwnd: isize) -> Option<TopWindow> {
     #[cfg(windows)]

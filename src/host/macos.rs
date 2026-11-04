@@ -1010,3 +1010,36 @@ pub fn debug_runtime(exe: &Path) -> Option<String> {
     }
     None
 }
+
+/// The platform a Mach-O executable was built for, from its `LC_BUILD_VERSION` (or an older
+/// `LC_VERSION_MIN_*`): `macos`, `maccatalyst` (an iPad app built for the Mac), `ios-simulator`,
+/// `tvos-simulator`, `watchos-simulator`, `visionos-simulator`, or the device platform it names. A
+/// simulator app runs as a macOS process of this user, on the Mac's CPU and GPU, with the simulator
+/// runtime's frameworks: its stacks are its own, its timings are not a device's.
+pub fn platform(exe: &Path) -> Option<&'static str> {
+    use object::macho::{self, MachHeader64};
+    use object::read::macho::MachHeader;
+    let b = std::fs::read(exe).ok()?;
+    let h = MachHeader64::<object::Endianness>::parse(&*b, 0).ok()?;
+    let e = h.endian().ok()?;
+    let mut cmds = h.load_commands(e, &*b, 0).ok()?;
+    while let Ok(Some(c)) = cmds.next() {
+        let p = match c.cmd() {
+            macho::LC_BUILD_VERSION => c.build_version().ok()??.platform.get(e),
+            macho::LC_VERSION_MIN_MACOSX => macho::PLATFORM_MACOS,
+            macho::LC_VERSION_MIN_IPHONEOS => macho::PLATFORM_IOS,
+            _ => continue,
+        };
+        return Some(match p {
+            macho::PLATFORM_MACOS => "macos",
+            macho::PLATFORM_MACCATALYST => "maccatalyst",
+            macho::PLATFORM_IOSSIMULATOR => "ios-simulator",
+            macho::PLATFORM_TVOSSIMULATOR => "tvos-simulator",
+            macho::PLATFORM_WATCHOSSIMULATOR => "watchos-simulator",
+            macho::PLATFORM_XROSSIMULATOR => "visionos-simulator",
+            macho::PLATFORM_IOS => "ios",
+            _ => "other",
+        });
+    }
+    None
+}
