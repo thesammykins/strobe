@@ -3328,6 +3328,18 @@ fn build_variant(role: &str, root: &Path, build: &Value, copy: Option<(&Path, &P
                 break;
             }
         }
+        // macOS: the `<exe>.dSYM` bundle beside it, since the objects a debug map points at are
+        // rebuilt by the other variant in a shared `{cache}`.
+        let file = built.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let dsym = built.with_file_name(format!("{file}.dSYM"));
+        if cfg!(target_os = "macos") && dsym.is_dir() {
+            let to = dest.with_file_name(format!("{}.dSYM", dest.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()));
+            let _ = std::fs::remove_dir_all(&to);
+            let ok = std::process::Command::new("/bin/cp").arg("-R").arg(&dsym).arg(&to).status().is_ok_and(|s| s.success());
+            if !ok {
+                return Err(Error::msg(format!("build {role}: could not copy {}", dsym.display())));
+            }
+        }
     }
     std::fs::write(marker, key)?;
     Ok(())
