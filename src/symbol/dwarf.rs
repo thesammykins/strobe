@@ -42,9 +42,7 @@ pub fn resolve(path: &Path, offsets: &[u64]) -> Option<Vec<Vec<Located>>> {
     };
     let debug_bytes = if obj.section_by_name(".debug_info").is_some() { None } else { debug_file(path, &obj).and_then(|p| std::fs::read(p).ok()) };
     let uuid = obj.mach_uuid().ok().flatten();
-    // A dSYM from another build of the module (a stale one beside a rebuilt app) would name the wrong
-    // code: only the one with the module's UUID is read.
-    let debug_obj = debug_bytes.as_deref().and_then(|b| object::File::parse(thin(b, uuid)).ok()).filter(|d| uuid.is_none() || d.mach_uuid().ok().flatten() == uuid);
+    let debug_obj = debug_bytes.as_deref().and_then(|b| object::File::parse(thin(b, uuid)).ok());
     let dwarf_obj = debug_obj.as_ref().unwrap_or(&obj);
     let ctx = context(dwarf_obj);
     Some(
@@ -150,9 +148,12 @@ fn dsym(path: &Path, uuid: &[u8; 16]) -> Option<PathBuf> {
     let name = path.file_name()?.to_string_lossy().to_string();
     let inner = |d: &Path| d.join("Contents/Resources/DWARF").join(&name);
     let bundles = path.ancestors().skip(1).filter(|a| a.extension().is_some_and(|e| ["app", "appex", "framework", "xpc", "bundle"].iter().any(|b| e == *b)));
+    // A dSYM from another build of the module (a stale one beside a rebuilt app) would name the wrong
+    // code: one without the module's UUID is passed over, for the cache.
+    let matches = |p: &Path| std::fs::read(p).ok().and_then(|b| object::File::parse(thin(&b, Some(*uuid))).ok().and_then(|o| o.mach_uuid().ok().flatten())) == Some(*uuid);
     for owner in std::iter::once(path).chain(bundles) {
         let beside = inner(&PathBuf::from(format!("{}.dSYM", owner.display())));
-        if beside.is_file() {
+        if beside.is_file() && matches(&beside) {
             return Some(beside);
         }
     }
